@@ -1,0 +1,5 @@
+{
+  "name": "Kotlin SVG Parser Fixer",
+  "description": "An interactive tool to analyze and fix SVG parsing logic issues, specifically handling attribute name collisions like 'id' and 'd'.",
+  "requestFramePermissions": []
+}
