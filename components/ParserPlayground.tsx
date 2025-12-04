@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { parseSvgContentFixed } from '../utils/parserLogic';
+import { parseSvgContentFixed, parseSvgContentBuggy } from '../utils/parserLogic';
 import { SvgAttributes } from '../types';
-import { AlertCircle, CheckCircle, Eye } from 'lucide-react';
+import { AlertCircle, CheckCircle, Eye, Bug, AlertTriangle } from 'lucide-react';
 
 interface Props {
   inputSvg: string;
@@ -9,19 +9,22 @@ interface Props {
 
 export const ParserPlayground: React.FC<Props> = ({ inputSvg }) => {
   const [result, setResult] = useState<SvgAttributes | null>(null);
+  const [useFixedLogic, setUseFixedLogic] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Parsing Effect
   useEffect(() => {
     try {
-      const data = parseSvgContentFixed(inputSvg);
+      // Choose parser based on state
+      const parser = useFixedLogic ? parseSvgContentFixed : parseSvgContentBuggy;
+      const data = parser(inputSvg);
       setResult(data);
     } catch (e) {
       console.error(e);
       setResult(null);
     }
-  }, [inputSvg]);
+  }, [inputSvg, useFixedLogic]);
 
   // Canvas Drawing Effect
   useEffect(() => {
@@ -89,27 +92,23 @@ export const ParserPlayground: React.FC<Props> = ({ inputSvg }) => {
       // Adjust for viewBox origin
       ctx.translate(-vbX, -vbY);
 
-      // Optional: Draw bounding box
-      // ctx.strokeStyle = '#334155';
-      // ctx.lineWidth = 1 / scale;
-      // ctx.strokeRect(vbX, vbY, vbW, vbH);
-
       // 3. Draw Paths
       if (result.paths.length > 0) {
         result.paths.forEach((d) => {
           try {
+            // Attempt to create Path2D. This will fail silently or throw for invalid data.
             const p = new Path2D(d);
             
             // Fill
-            ctx.fillStyle = 'rgba(16, 185, 129, 0.2)'; // Emerald 500, 20% opacity
+            ctx.fillStyle = useFixedLogic ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'; 
             ctx.fill(p);
             
             // Stroke
-            ctx.strokeStyle = '#10b981'; // Emerald 500
-            ctx.lineWidth = 1.5 / scale; // Consistent hairline width
+            ctx.strokeStyle = useFixedLogic ? '#10b981' : '#ef4444'; 
+            ctx.lineWidth = 1.5 / scale;
             ctx.stroke(p);
           } catch (err) {
-            // Ignore invalid paths
+            // Invalid path data (expected behavior for buggy logic)
           }
         });
       }
@@ -125,20 +124,42 @@ export const ParserPlayground: React.FC<Props> = ({ inputSvg }) => {
     resizeObserver.observe(container);
 
     return () => resizeObserver.disconnect();
-  }, [result]);
+  }, [result, useFixedLogic]);
+
+  // Check if we suspect bad data extraction (e.g. ID leakage)
+  const isLikelyBuggy = result && result.paths.some(p => !/^[Mm]/.test(p.trim()) && p.length < 100 && !/[0-9]/.test(p));
 
   return (
     <div className="flex flex-col h-full gap-4">
       
-      {/* Explanation Card */}
-      <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 flex-shrink-0">
-        <h4 className="text-emerald-400 font-semibold mb-2 flex items-center gap-2">
-          <CheckCircle size={18} />
-          Logic Fixed
-        </h4>
-        <p className="text-slate-300 text-sm mb-1">
-          The extraction logic correctly identifies <code>d="..."</code> attributes while ignoring partial matches like <code>id="..."</code>.
-        </p>
+      {/* Control / Explanation Card */}
+      <div className={`p-4 rounded-lg border transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${useFixedLogic ? 'bg-emerald-950/30 border-emerald-500/30' : 'bg-rose-950/30 border-rose-500/30'}`}>
+        <div>
+          <h4 className={`font-semibold flex items-center gap-2 ${useFixedLogic ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {useFixedLogic ? <CheckCircle size={18} /> : <Bug size={18} />}
+            {useFixedLogic ? 'Fixed Logic' : 'Original (Buggy) Logic'}
+          </h4>
+          <p className="text-slate-400 text-xs mt-1">
+            {useFixedLogic 
+              ? 'Correctly identifies whole-word attributes.' 
+              : 'Naively finds the first substring match (e.g. finds "d=" inside "id=").'}
+          </p>
+        </div>
+        
+        <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700">
+           <button 
+             onClick={() => setUseFixedLogic(false)}
+             className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${!useFixedLogic ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+           >
+             Original
+           </button>
+           <button 
+             onClick={() => setUseFixedLogic(true)}
+             className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${useFixedLogic ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+           >
+             Fixed
+           </button>
+        </div>
       </div>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0">
@@ -150,9 +171,6 @@ export const ParserPlayground: React.FC<Props> = ({ inputSvg }) => {
                     <Eye size={14} />
                     Canvas Visualization
                 </span>
-                <span className="text-[10px] text-slate-500">
-                    *Transforms ignored
-                </span>
             </div>
             <div ref={containerRef} className="flex-1 bg-slate-950 relative overflow-hidden flex items-center justify-center">
                  <canvas 
@@ -162,7 +180,16 @@ export const ParserPlayground: React.FC<Props> = ({ inputSvg }) => {
                  />
                  {(!result || result.paths.length === 0) && (
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-700 text-sm">
-                        No paths to render
+                        No paths found
+                    </div>
+                 )}
+                 {result && result.paths.length > 0 && isLikelyBuggy && !useFixedLogic && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-rose-500/80 bg-slate-950/80 p-4 text-center">
+                        <AlertTriangle size={32} className="mb-2" />
+                        <p className="font-semibold">Render Failed</p>
+                        <p className="text-xs max-w-[200px] mt-1">
+                          The extracted data "{result.paths[0].substring(0, 15)}..." is not a valid SVG path command.
+                        </p>
                     </div>
                  )}
             </div>
@@ -195,12 +222,27 @@ export const ParserPlayground: React.FC<Props> = ({ inputSvg }) => {
                     <div className="text-slate-500 text-sm italic">No paths found</div>
                     ) : (
                     <ul className="space-y-2">
-                        {result.paths.map((p, i) => (
-                        <li key={i} className="bg-slate-950 p-3 rounded border border-slate-800 text-xs font-mono text-slate-300 break-all hover:bg-slate-900 transition-colors cursor-default group">
-                            <span className="text-orange-400 mr-2 select-none group-hover:text-orange-300">[{i}]</span>
-                            {p.substring(0, 100)}{p.length > 100 ? '...' : ''}
-                        </li>
-                        ))}
+                        {result.paths.map((p, i) => {
+                            const isSuspicious = !/^[Mm]/.test(p.trim()) && p.length < 50;
+                            return (
+                                <li key={i} className={`p-3 rounded border text-xs font-mono break-all cursor-default transition-colors ${
+                                    isSuspicious && !useFixedLogic 
+                                      ? 'bg-rose-950/30 border-rose-900 text-rose-300' 
+                                      : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-900'
+                                }`}>
+                                    <div className="flex items-start gap-2">
+                                        <span className="text-slate-500 shrink-0 mt-[1px]">[{i}]</span>
+                                        <span>{p.substring(0, 150)}{p.length > 150 ? '...' : ''}</span>
+                                    </div>
+                                    {isSuspicious && !useFixedLogic && (
+                                        <div className="mt-2 text-[10px] text-rose-400 font-sans flex items-center gap-1">
+                                            <AlertTriangle size={10} />
+                                            Suspected ID leak (Invalid path data)
+                                        </div>
+                                    )}
+                                </li>
+                            );
+                        })}
                     </ul>
                     )}
                 </div>
